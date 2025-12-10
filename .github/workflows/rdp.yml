@@ -1,0 +1,90 @@
+name: RDP with Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600  # 60 hours
+
+    steps:
+      - name: Configure RDP
+        run: |
+          # Enable RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
+          
+          # Enable RDP through firewall
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          Write-Host "✅ RDP Enabled"
+
+      - name: Create RDP User with Password
+        run: |
+          # Create user with password
+          $username = "RDPUser"
+          $password = ConvertTo-SecureString "1234" -AsPlainText -Force
+          New-LocalUser -Name $username -Password $password -FullName "RDP User" -Description "Tailscale RDP User" -PasswordNeverExpires -ErrorAction SilentlyContinue
+          
+          # Add to Remote Desktop Users group
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          
+          # Add to Administrators group (for full access)
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ User Created: $username"
+          Write-Host "✅ Password: 1234"
+
+      - name: Install Tailscale
+        run: |
+          # Download Tailscale MSI installer
+          $installerUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale-setup.msi"
+          
+          Write-Host "⬇️ Downloading Tailscale..."
+          Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
+          
+          Write-Host "📦 Installing Tailscale..."
+          Start-Process msiexec.exe -Wait -ArgumentList "/i `"$installerPath`" /quiet /qn /norestart TS_UNATTENDEDMODE=always"
+          
+          Write-Host "✅ Tailscale Installed"
+
+      - name: Connect to Tailscale
+        run: |
+          # Wait for Tailscale service to start
+          Start-Sleep -Seconds 5
+          
+          # Connect using auth key
+          & 'C:\Program Files\Tailscale\tailscale.exe' up --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" --hostname="github-rdp-${{ github.run_number }}"
+          
+          Write-Host "✅ Tailscale Connected"
+          
+          # Get Tailscale IP
+          Start-Sleep -Seconds 3
+          $status = & 'C:\Program Files\Tailscale\tailscale.exe' status --json | ConvertFrom-Json
+          $tailscaleIP = $status.Self.TailscaleIPs[0]
+          
+          Write-Host "========================================="
+          Write-Host "🎯 RDP CONNECTION INFO"
+          Write-Host "========================================="
+          Write-Host "Tailscale IP: $tailscaleIP"
+          Write-Host "Username: RDPUser"
+          Write-Host "Password: 1234"
+          Write-Host "========================================="
+          Write-Host "💻 Connect using: mstsc.exe"
+          Write-Host "Or Remote Desktop app on any device"
+          Write-Host "========================================="
+
+      - name: Keep Alive
+        run: |
+          Write-Host "⏳ RDP Server Running..."
+          Write-Host "💡 This will run for 60 hours or until you stop it"
+          Write-Host "🛑 To stop: Go to Actions tab → Cancel workflow"
+          Write-Host ""
+          
+          # Infinite loop to keep runner alive
+          while ($true) { 
+            Start-Sleep -Seconds 300 
+            Write-Host "$(Get-Date -Format 'HH:mm:ss') - Still running..."
+          }
