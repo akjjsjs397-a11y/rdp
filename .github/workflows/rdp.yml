@@ -1,90 +1,87 @@
-name: RDP with Tailscale
+name: Linux RDP with Tailscale
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp:
-    runs-on: windows-latest
+  rdp-linux:
+    runs-on: ubuntu-latest
     timeout-minutes: 3600  # 60 hours
 
     steps:
-      - name: Configure RDP
+      - name: Install Desktop Environment & XRDP
         run: |
-          # Enable RDP
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
+          sudo apt-get update
           
-          # Enable RDP through firewall
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          # Install XFCE4 (Lightweight Desktop) & XRDP
+          sudo apt-get install -y xfce4 xfce4-goodies xrdp
           
-          Write-Host "✅ RDP Enabled"
+          # Configure XRDP to use XFCE
+          echo "xfce4-session" > ~/.xsession
+          
+          # Enable and start XRDP service
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          
+          # Open RDP port in firewall (if ufw is active, usually open on runners)
+          sudo ufw allow 3389/tcp || true
+          
+          echo "✅ Desktop & XRDP Installed"
 
-      - name: Create RDP User with Password
+      - name: Create RDP User
         run: |
-          # Create user with password
-          $username = "RDPUser"
-          $password = ConvertTo-SecureString "1234" -AsPlainText -Force
-          New-LocalUser -Name $username -Password $password -FullName "RDP User" -Description "Tailscale RDP User" -PasswordNeverExpires -ErrorAction SilentlyContinue
+          # Create user 'linuxuser' with password '1234'
+          # GitHub runners already have a 'runner' user, but we'll make a dedicated one
+          sudo useradd -m -s /bin/bash linuxuser
+          echo "linuxuser:1234" | sudo chpasswd
           
-          # Add to Remote Desktop Users group
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          # Grant sudo access (optional)
+          sudo usermod -aG sudo linuxuser
           
-          # Add to Administrators group (for full access)
-          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
-          
-          Write-Host "✅ User Created: $username"
-          Write-Host "✅ Password: 1234"
+          echo "✅ User Created: linuxuser"
+          echo "✅ Password: 1234"
 
       - name: Install Tailscale
         run: |
-          # Download Tailscale MSI installer
-          $installerUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale-setup.msi"
+          # Add Tailscale's package signature and repository
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
           
-          Write-Host "⬇️ Downloading Tailscale..."
-          Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
+          sudo apt-get update
+          sudo apt-get install -y tailscale
           
-          Write-Host "📦 Installing Tailscale..."
-          Start-Process msiexec.exe -Wait -ArgumentList "/i `"$installerPath`" /quiet /qn /norestart TS_UNATTENDEDMODE=always"
-          
-          Write-Host "✅ Tailscale Installed"
+          echo "✅ Tailscale Installed"
 
       - name: Connect to Tailscale
         run: |
-          # Wait for Tailscale service to start
-          Start-Sleep -Seconds 5
+          # Start Tailscale
+          sudo tailscale up --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" --hostname="github-linux-${{ github.run_number }}" --ssh
           
-          # Connect using auth key
-          & 'C:\Program Files\Tailscale\tailscale.exe' up --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" --hostname="github-rdp-${{ github.run_number }}"
-          
-          Write-Host "✅ Tailscale Connected"
+          echo "✅ Tailscale Connected"
           
           # Get Tailscale IP
-          Start-Sleep -Seconds 3
-          $status = & 'C:\Program Files\Tailscale\tailscale.exe' status --json | ConvertFrom-Json
-          $tailscaleIP = $status.Self.TailscaleIPs[0]
+          TAILSCALE_IP=$(tailscale ip -4)
           
-          Write-Host "========================================="
-          Write-Host "🎯 RDP CONNECTION INFO"
-          Write-Host "========================================="
-          Write-Host "Tailscale IP: $tailscaleIP"
-          Write-Host "Username: RDPUser"
-          Write-Host "Password: 1234"
-          Write-Host "========================================="
-          Write-Host "💻 Connect using: mstsc.exe"
-          Write-Host "Or Remote Desktop app on any device"
-          Write-Host "========================================="
+          echo "========================================="
+          echo "🎯 RDP CONNECTION INFO"
+          echo "========================================="
+          echo "Tailscale IP: $TAILSCALE_IP"
+          echo "Username: linuxuser"
+          echo "Password: 1234"
+          echo "========================================="
+          echo "💻 Connect using: mstsc.exe or Remmina"
+          echo "========================================="
 
       - name: Keep Alive
         run: |
-          Write-Host "⏳ RDP Server Running..."
-          Write-Host "💡 This will run for 60 hours or until you stop it"
-          Write-Host "🛑 To stop: Go to Actions tab → Cancel workflow"
-          Write-Host ""
+          echo "⏳ Linux RDP Server Running..."
+          echo "💡 This will run for 60 hours or until you stop it"
           
-          # Infinite loop to keep runner alive
-          while ($true) { 
-            Start-Sleep -Seconds 300 
-            Write-Host "$(Get-Date -Format 'HH:mm:ss') - Still running..."
-          }
+          # Disable default sleep/suspend to be safe
+          sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+          
+          # Infinite loop
+          while true; do
+            sleep 300
+            echo "$(date) - Still running..."
+          done
