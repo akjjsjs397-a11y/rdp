@@ -1,19 +1,22 @@
-name: Linux RDP with Tailscale
+name: Colab-Style Linux RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3600  # 60 hours
+  rdp-colab-style:
+    # 🎯 FORCE UBUNTU 22.04 (Same as standard Colab notebooks)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 3600
 
     steps:
-      - name: Install Desktop Environment & XRDP
+      - name: Install Desktop & XRDP
         run: |
           sudo apt-get update
           
           # Install XFCE4 (Lightweight Desktop) & XRDP
+          # This mimics having a display, which Colab usually doesn't have by default
+          # but is required for RDP to work.
           sudo apt-get install -y xfce4 xfce4-goodies xrdp
           
           # Configure XRDP to use XFCE
@@ -21,29 +24,29 @@ jobs:
           
           # Enable and start XRDP service
           sudo systemctl enable xrdp
-          sudo systemctl start xrdp
+          sudo systemctl restart xrdp
           
-          # Open RDP port in firewall (if ufw is active, usually open on runners)
+          # Open firewall port 3389
           sudo ufw allow 3389/tcp || true
           
-          echo "✅ Desktop & XRDP Installed"
+          echo "✅ Desktop Environment Ready"
 
-      - name: Create RDP User
+      - name: Create 'colab' User
         run: |
-          # Create user 'linuxuser' with password '1234'
-          # GitHub runners already have a 'runner' user, but we'll make a dedicated one
-          sudo useradd -m -s /bin/bash linuxuser
-          echo "linuxuser:1234" | sudo chpasswd
+          # Create a user named 'colab' to feel familiar
+          sudo useradd -m -s /bin/bash colab
           
-          # Grant sudo access (optional)
-          sudo usermod -aG sudo linuxuser
+          # Set password to '1234'
+          echo "colab:1234" | sudo chpasswd
           
-          echo "✅ User Created: linuxuser"
-          echo "✅ Password: 1234"
+          # Give sudo rights (root access)
+          sudo usermod -aG sudo colab
+          
+          echo "✅ User 'colab' created"
 
       - name: Install Tailscale
         run: |
-          # Add Tailscale's package signature and repository
+          # Install Tailscale for Ubuntu 22.04 (Jammy)
           curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
           curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
           
@@ -54,34 +57,22 @@ jobs:
 
       - name: Connect to Tailscale
         run: |
-          # Start Tailscale
-          sudo tailscale up --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" --hostname="github-linux-${{ github.run_number }}" --ssh
+          # Connect using the secret you added
+          sudo tailscale up --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" --hostname="colab-replica-${{ github.run_number }}" --ssh
           
-          echo "✅ Tailscale Connected"
-          
-          # Get Tailscale IP
           TAILSCALE_IP=$(tailscale ip -4)
           
           echo "========================================="
-          echo "🎯 RDP CONNECTION INFO"
+          echo "🎯 RDP CREDENTIALS"
           echo "========================================="
-          echo "Tailscale IP: $TAILSCALE_IP"
-          echo "Username: linuxuser"
-          echo "Password: 1234"
-          echo "========================================="
-          echo "💻 Connect using: mstsc.exe or Remmina"
+          echo "IP:       $TAILSCALE_IP"
+          echo "User:     colab"
+          echo "Pass:     1234"
+          echo "OS:       Ubuntu 22.04 LTS (Colab Match)"
           echo "========================================="
 
       - name: Keep Alive
         run: |
-          echo "⏳ Linux RDP Server Running..."
-          echo "💡 This will run for 60 hours or until you stop it"
-          
-          # Disable default sleep/suspend to be safe
-          sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-          
-          # Infinite loop
-          while true; do
-            sleep 300
-            echo "$(date) - Still running..."
-          done
+          echo "⏳ Running... Connect now via RDP!"
+          sudo systemctl mask sleep.target suspend.target
+          while true; do sleep 300; echo "Still alive..."; done
